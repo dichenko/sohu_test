@@ -6,7 +6,7 @@ import { createDb } from "./db.js";
 import { createLogger } from "./logger.js";
 import { trxToMicros } from "./money.js";
 import { Notifier } from "./notifier.js";
-import { bootstrapUsers } from "./repository.js";
+import { bootstrapUsers, logAudit } from "./repository.js";
 import { SohuClient } from "./sohu.js";
 
 const config = loadConfig();
@@ -24,6 +24,38 @@ const { bot, notifier } = createBot(
   (createdBot) => new Notifier(createdBot, db, config.ALLOWED_USER_ID, config.ADMIN_USER_ID, logger),
   logger
 );
+
+// bot.init() verifies the Telegram token before the deployment notification.
+// The Sohu request is authenticated and persisted by SohuClient in provider_http_logs.
+await bot.init();
+try {
+  const providerAccount = await sohu.getUserInfo();
+  await logAudit(db, {
+    eventType: "deployment.connectivity.succeeded",
+    entityType: "deployment",
+    payload: {
+      telegram_bot: bot.botInfo.username,
+      sohu_balance_trx: providerAccount.data.balance_trx,
+      sohu_balance_usdt: providerAccount.data.balance_usdt
+    }
+  });
+  await notifier.send(
+    config.ADMIN_USER_ID,
+    `✅ Деплой успешно завершён, связь с SOHU установлена.\n\nTelegram: @${bot.botInfo.username}\nАвторизация Sohu: успешна\nБаланс Sohu: ${providerAccount.data.balance_trx} TRX / ${providerAccount.data.balance_usdt} USDT`
+  );
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  logger.error({ err: error }, "Deployment Sohu connectivity check failed");
+  await logAudit(db, {
+    eventType: "deployment.connectivity.failed",
+    entityType: "deployment",
+    payload: { telegram_bot: bot.botInfo.username, error: message }
+  });
+  await notifier.send(
+    config.ADMIN_USER_ID,
+    `❌ Бот запущен, но проверка связи с SOHU не пройдена.\n\nTelegram: @${bot.botInfo.username}\nОшибка: ${message}\nПроверьте SOHU_API_KEY, SOHU_API_SECRET, время сервера и provider_http_logs.`
+  );
+}
 
 const health = createServer(async (request, response) => {
   if (request.url !== "/healthz") {
