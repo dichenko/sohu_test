@@ -1,0 +1,962 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "TRC 资源接口服务 V2",
+    "description": "用于管理 TRON 网络资源（能量、带宽）、账户激活、速充、地址归集以及 Fragment 订单服务的 API。通过请求头中的 API 密钥/签名进行认证。",
+    "version": "2.1.0"
+  },
+  "servers": [
+    {
+      "url": "https://weidubot.cc/api/v2",
+      "description": "生产环境服务器"
+    }
+  ],
+  "tags": [
+    {
+      "name": "账户管理 (Account Management)",
+      "description": "用户信息查询与账户激活。"
+    },
+    {
+      "name": "资源订单 (Energy/Bandwidth Orders)",
+      "description": "TRON 能量和带宽时长购买、订单查询与管理。"
+    },
+    {
+      "name": "能量速充 (Fast Recover)",
+      "description": "能量/带宽快速补充服务。"
+    },
+    {
+      "name": "智能托管 (Smart Delegation)",
+      "description": "智能能量托管服务的相关操作。"
+    },
+    {
+      "name": "能量笔数 (Energy Times)",
+      "description": "API笔数的相关操作。"
+    },
+    {
+      "name": "Fragment 服务 (Premium/Stars Service)",
+      "description": "通过 Fragment 订购 Telegram Premium 会员和星星的操作。"
+    },
+    {
+      "name": "地址归集 (Converge Address)",
+      "description": "管理 USDT 自动归集地址。"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key",
+        "description": "自定义 API 密钥/签名认证。需要在请求头中包含三个字段：\n1.  `x-api-key`: 您唯一的 API Key。\n2.  `x-timestamp`: 发送请求时的当前 UNIX 时间戳（秒）。必须在服务器时间 ±5 分钟内。\n3.  `x-signature`: 使用您的 API Secret 作为密钥，对字符串 `x-api-key` + `x-timestamp` 进行 HMAC-SHA256 计算得到的签名。签名应为小写十六进制字符串。\n签名生成示例 (PHP): `hash_hmac('sha256', $apiKey . $timestamp, $apiSecret);`\n"
+      }
+    },
+    "schemas": {
+      "BaseResponse": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "integer", "description": "状态码，1 表示成功，0 表示失败。", "enum": [ 1 ], "example": 1 },
+          "msg": { "type": "string", "description": "响应消息文本。", "example": "操作成功" },
+          "time": { "type": "string", "description": "服务器响应时间戳。", "example": "1711961879" },
+          "data": { "type": "object", "nullable": true, "description": "具体的响应数据负载。" }
+        },
+        "required": [ "code", "msg", "time" ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "integer", "description": "状态码，0 表示失败。", "enum": [ 0 ], "example": 0 },
+          "msg": { "type": "string", "description": "错误消息描述。", "example": "参数错误" },
+          "time": { "type": "string", "description": "服务器响应时间戳。", "example": "1711961879" },
+          "data": { "type": "object", "nullable": true, "example": null }
+        },
+        "required": [ "code", "msg", "time" ]
+      },
+      "ActivationData": {
+        "type": "object",
+        "description": "账户激活请求提交后的响应数据。",
+        "properties": {
+          "tx_id": { "type": "string", "description": "交易哈希 (通常在后台任务完成后才有，初始为空)。", "example": "" },
+          "order_id": { "type": "integer", "description": "用于追踪激活请求的内部订单 ID。", "example": 12345 }
+        },
+        "required": [ "tx_id", "order_id" ]
+      },
+      "EnergyOrderResponseData": {
+        "type": "object",
+        "description": "能量订单提交成功后的响应数据。",
+        "properties": {
+          "order_sn": { "type": "string", "description": "唯一的订单序列号。", "example": "EN2025040217175512345" },
+          "price": { "type": "number", "format": "float", "nullable": true, "description": "计算出的单位能量价格 (SUN)。", "example": 35000000 },
+          "fee": { "type": "number", "format": "float", "nullable": true, "description": "额外手续费 (TRX)。", "example": 0.56 },
+          "amount": { "type": "number", "format": "float", "nullable": true, "description": "订单总费用 (TRX)。", "example": 5.65 },
+          "balance": { "type": "number", "format": "float", "nullable": true, "description": "操作后账户余额 (可能不准确或不提供)。", "example": 94.35 }
+        },
+        "required": [ "order_sn" ]
+      },
+      "NetOrderResponseData": {
+        "type": "object",
+        "description": "带宽订单提交成功后的响应数据。",
+        "properties": {
+          "order_sn": { "type": "string", "description": "唯一的订单序列号。", "example": "NET2025040217180012345" },
+          "amount": { "type": "number", "format": "float", "nullable": true, "description": "订单总费用 (TRX)。", "example": 2.10 },
+          "price": { "type": "number", "format": "float", "nullable": true, "description": "计算出的单位带宽价格 (SUN?)。", "example": 420000 },
+          "fee": { "type": "number", "format": "float", "nullable": true, "description": "额外手续费 (TRX)。", "example": 0 },
+          "balance": { "type": "number", "format": "float", "nullable": true, "description": "操作后账户余额 (可能不准确或不提供)。", "example": 97.90 }
+        },
+        "required": [ "order_sn" ]
+      },
+      "QueryResultDataSuccess": {
+        "type": "object",
+        "description": "查询成功的订单详情。",
+        "properties": {
+          "order_sn": { "type": "string" },
+          "amount": { "type": "number", "format": "float", "nullable": true, "description": "订单金额 (TRX)"},
+          "price": { "type": "number", "format": "float", "nullable": true, "description": "订单单价 (SUN)"},
+          "fee": { "type": "number", "format": "float", "nullable": true, "description": "订单手续费 (TRX)"},
+          "period": { "type": "string", "description": "周期名称" },
+          "status": { "type": "string", "description": "订单状态码" },
+          "orders": {
+            "type": "array",
+            "description": "子订单（委托）列表",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from_address": { "type": "string", "description": "该笔委托的来源地址" },
+                "tx_id": { "type": "string", "nullable": true, "description": "该笔委托的交易哈希" },
+                "count": { "type": "integer", "description": "该笔委托的资源数量" }
+              },
+              "required": [ "from_address", "count" ]
+            }
+          }
+        },
+        "required": [ "order_sn", "period", "status", "orders" ]
+      },
+      "QueryResultDataFailed": {
+        "type": "object",
+        "description": "查询失败或未完成的订单基本信息。",
+        "properties": {
+          "order_sn": { "type": "string" },
+          "amount": { "type": "number", "format": "float", "nullable": true },
+          "price": { "type": "number", "format": "float", "nullable": true },
+          "fee": { "type": "number", "format": "float", "nullable": true },
+          "period": { "type": "string", "nullable": true },
+          "status": { "type": "string", "description": "订单状态码" },
+          "orders": { "type": "array", "items": {}, "description":"空数组"}
+        },
+        "required": [ "order_sn", "status", "orders" ]
+      },
+      "UserInfoData": {
+        "type": "object",
+        "description": "用户信息查询结果。",
+        "properties": {
+          "balance_trx": { "type": "string", "description": "用户可用 TRX 余额 (格式化字符串)。", "example": "100.5000" },
+          "balance_usdt": { "type": "string", "description": "用户可用 USDT 余额 (格式化字符串)。", "example": "500.0000" }
+        },
+        "required": [ "balance_trx", "balance_usdt" ]
+      },
+      "ResourcePriceData": {
+        "type": "object",
+        "description": "资源价格查询结果。",
+        "properties": {
+          "price": { "type": "integer", "description": "单位价格 (SUN / 每周期)。", "example": 35 },
+          "amount": { "type": "string", "description": "请求数量的总预估费用 (单位：TRX)，包含可能的手续费。", "example": "5.6500" },
+          "fee": { "type": "string", "description": "额外的手续费 (单位：TRX)，例如小额订单费用。", "example": "0.5600" },
+          "remark": { "type": "string", "description": "关于价格计算的附加说明 (例如手续费详情)。", "example": "包含 0.56 TRX 带宽手续费" }
+        },
+        "required": [ "price", "amount", "fee", "remark" ]
+      },
+      "FastRecoverPriceData": {
+        "type": "object",
+        "description": "速冲价格查询结果",
+        "properties": {
+          "price": { "type": "integer", "description": "单位价格 (SUN)。", "example": 100 },
+          "amount": { "type": "string", "description": "请求数量的总预估费用 (单位：TRX)，包含可能的手续费。", "example": "5.6500" },
+          "fee": { "type": "string", "description": "额外的手续费 (单位：TRX)，例如小额订单费用。", "example": "0.5600" }
+        },
+        "required": [ "price", "amount", "fee", "remark" ]
+      },
+      "SmartPriceData": {
+        "type": "object",
+        "description": "智能托管服务的价格信息。",
+        "properties": {
+          "65K_price": { "type": "string", "description": "每次 65K 能量委托的价格 (TRX)。", "example": "0.5000" },
+          "131K_price": { "type": "string", "description": "每次 131K 能量委托的价格 (TRX)。", "example": "0.9500" },
+          "remark": { "type": "string", "nullable": true, "example": "价格单位：TRX/次" },
+          "high_frequency": {
+            "type": "object",
+            "description": "高频价格信息，包含能量价格、押金和统计周期等。",
+            "properties": {
+              "65k_price": {"type": "string", "nullable": true, "description": "高频模式65K能量的价格。", "example": "0.8000"},
+              "131k_price": {"type": "string", "nullable": true, "description": "高频模式131K能量的价格。", "example": "1.5000"},
+              "deposit_period": { "type": "string", "nullable": true, "description": "高频模式统计周期，单位：小时", "example": "72" },
+              "deposit_amount": { "type": "string", "nullable": true, "description": "高频模式押金，单位: TRX" , "example": 1000 },
+              "min_energy_count": { "type": "string", "nullable": true, "description": "高频模式最少使用能量数", "example": 200000 }
+
+            }
+          },
+          "jisu_frequency": {
+            "type": "object",
+            "description": "极速模式价格信息，包含能量价格、押金和统计周期等。",
+            "properties": {
+              "65k_price": {"type": "string", "nullable": true, "description": "极速模式65K能量的价格。", "example": "0.8000"},
+              "131k_price": {"type": "string", "nullable": true, "description": "极速模式131K能量的价格。", "example": "1.5000"},
+              "deposit_period": { "type": "string", "nullable": true, "description": "极速模式统计周期，单位：小时", "example": "72" },
+              "deposit_amount": { "type": "string", "nullable": true, "description": "极速模式押金，单位: TRX" , "example": 1000 },
+              "min_energy_count": { "type": "string", "nullable": true, "description": "极速模式最少使用能量数", "example": 200000 }
+
+            }
+          },
+          "guangsu_frequency": {
+            "type": "object",
+            "description": "光速模式价格信息，包含能量价格、押金和统计周期等。",
+            "properties": {
+              "65k_price": {"type": "string", "nullable": true, "description": "光速模式65K能量的价格。", "example": "0.8000"},
+              "131k_price": {"type": "string", "nullable": true, "description": "光速模式131K能量的价格。", "example": "1.5000"},
+              "deposit_period": { "type": "string", "nullable": true, "description": "光速模式统计周期，单位：小时", "example": "72" },
+              "deposit_amount": { "type": "string", "nullable": true, "description": "光速模式押金，单位: TRX" , "example": 1000 },
+              "min_energy_count": { "type": "string", "nullable": true, "description": "光速模式最少使用能量数", "example": 200000 }
+
+            }
+          }
+        },
+        "required": [ "65K_price", "131K_price" ]
+      },
+      "TimesPriceData": {
+        "type": "object",
+        "description": "API笔数的价格信息。",
+        "properties": {
+          "price": { "type": "string", "description": "每次能量委托的价格 (TRX)。", "example": "0.6000" },
+          "remark": { "type": "string", "nullable": true, "example": "价格单位：TRX/笔" }
+        },
+        "required": [ "price" ]
+      },
+      "EnergyTimesDelegateResponseData": {
+        "type": "object",
+        "description": "API笔数委托成功后的响应数据。",
+        "properties": {
+          "address": { "type": "string", "description": "委托的目标地址"},
+          "remain_times": { "type": "integer", "description": "操作后剩余笔数" },
+          "status": { "type": "string", "description": "当前服务状态", "enum": ["start", "stop"]}
+        },
+        "required": ["address", "remain_times", "status"]
+      },
+      "EnergyTimesOrderItem": {
+        "type": "object",
+        "description": "能量笔数消耗记录项",
+        "properties": {
+          "remain_times": { "type": "integer", "nullable": true, "description": "此次消耗后的剩余笔数" },
+          "status": { "type": "string", "nullable": true, "description": "能量状态", "enum": ["init", "waiting_delegate", "delegate_success", "delegate_failed", "waiting_un_delegate", "un_delegate_success", "un_delegate_failed"]},
+          "speed_mode": { "type": "string", "nullable": true, "description": "能量模式", "enum": ["normal", "low_speed"] },
+          "used_tx_id": { "type": "string", "nullable": true, "description": "消耗能量的交易哈希" },
+          "used_energy": { "type": "integer", "nullable": true, "description": "消耗的能量值" },
+          "delegate_tx_id": { "type": "string", "nullable": true, "description": "委托能量的交易哈希" },
+          "delegate_time": { "type": "integer", "nullable": true, "description": "委托时间戳" },
+          "un_delegate_tx_id": { "type": "string", "nullable": true, "description": "回收能量的交易哈希" },
+          "un_delegate_time": { "type": "integer", "nullable": true, "description": "回收时间戳" },
+          "createtime": { "type": "integer", "nullable": true, "description": "记录创建时间戳" }
+        }
+
+      },
+      "EnergyTimesQueryResponseData": {
+        "type": "object",
+        "description": "API笔数的地址查询结果。",
+        "properties": {
+          "address": { "type": "string", "description": "TRON 地址" },
+          "remain_times": { "type": "integer", "description": "剩余可用笔数" },
+          "status": { "type": "string", "enum": [ "start", "stop" ], "description": "服务状态 (启用/暂停)" },
+          "order_count": { "type": "integer", "description": "总消耗记录数" },
+          "page_size": { "type": "integer", "description": "每页记录数" },
+          "page": { "type": "integer", "description": "当前页码" },
+          "orders": { "type": "array", "description": "当前页的消耗记录列表", "items": { "$ref": "#/components/schemas/EnergyTimesOrderItem" } }
+        },
+        "required": [ "address", "remain_times", "status", "order_count", "page_size", "page", "orders" ]
+      },
+      "EnergyTimesData": {
+        "type": "object",
+        "description": "API笔数的地址状态信息（用于更新响应）。",
+        "properties": {
+          "address": { "type": "string", "description": "TRON 地址" },
+          "remain_times": { "type": "integer", "description": "剩余可用笔数" },
+          "status": { "type": "string", "enum": [ "start", "stop" ], "description": "服务状态 (启用/暂停)" }
+        },
+        "required": [ "address", "remain_times", "status" ]
+      },
+      "EnergySmartDelegateResponseData": {
+        "type": "object",
+        "description": "智能托管委托成功后的响应数据。",
+        "properties": {
+          "address": { "type": "string", "description": "委托的目标地址"},
+          "balance": { "type": "string", "description": "操作后的总余额 (格式化字符串)" },
+          "status": { "type": "string", "description": "当前服务状态", "enum": ["start", "stop"]},
+          "net_protect": { "type": "string", "description": "带宽模式", "enum": ["open", "close"]}
+        },
+        "required": ["address", "balance", "status"]
+      },
+      "EnergySmartOrderItem": {
+        "type": "object",
+        "description": "智能托管消耗记录项",
+        "properties": {
+          "energy_type": { "type": "string", "nullable": true, "description": "能量类型: 65k=65K能量, 131k=131K能量" },
+          "amount": { "type": "number", "format": "float", "nullable": true, "description": "消耗金额" },
+          "balance": { "type": "number", "format": "float", "nullable": true, "description": "消耗后余额" },
+          "currency": { "type": "string", "nullable": true, "description": "币种", "enum": ["trx", "usdt"]},
+          "status": { "type": "string", "nullable": true, "description": "能量状态", "enum": ["init", "waiting_delegate", "delegate_success", "delegate_failed", "waiting_un_delegate", "un_delegate_success", "un_delegate_failed"]},
+          "used_tx_id": { "type": "string", "nullable": true, "description": "消耗能量的交易哈希" },
+          "speed_mode": { "type": "string", "nullable": true, "description": "能量模式", "enum": ["normal", "low_speed"] },
+          "used_energy": { "type": "integer", "nullable": true, "description": "消耗的能量值" },
+          "used_times": { "type": "integer", "nullable": true, "description": "使用笔数" },
+          "remain_times": { "type": "integer", "nullable": true, "description": "地址剩余总笔数" },
+          "delegate_count": { "type": "integer", "nullable": true, "description": "委托的能量数量" },
+          "delegate_tx_id": { "type": "string", "nullable": true, "description": "委托能量的交易哈希" },
+          "delegate_time": { "type": "integer", "nullable": true, "description": "委托时间戳" },
+          "un_delegate_tx_id": { "type": "string", "nullable": true, "description": "回收能量的交易哈希" },
+          "un_delegate_time": { "type": "integer", "nullable": true, "description": "回收时间戳" },
+          "createtime": { "type": "integer", "nullable": true, "description": "记录创建时间戳" }
+        }
+
+      },
+      "EnergySmartQueryResponseData": {
+        "type": "object",
+        "description": "智能托管服务的地址查询结果。",
+        "properties": {
+          "address": { "type": "string", "description": "TRON 地址" },
+          "balance": { "type": "string", "description": "剩余可用额度 (格式化字符串)" },
+          "status": { "type": "string", "enum": [ "start", "stop" ], "description": "服务状态 (启用/暂停)" },
+          "order_count": { "type": "integer", "description": "总消耗记录数" },
+          "page_size": { "type": "integer", "description": "每页记录数" },
+          "page": { "type": "integer", "description": "当前页码" },
+          "orders": { "type": "array", "description": "当前页的消耗记录列表", "items": { "$ref": "#/components/schemas/EnergySmartOrderItem" } }
+        },
+        "required": [ "address", "balance", "status", "order_count", "page_size", "page", "orders" ]
+      },
+      "EnergySmartData": {
+        "type": "object",
+        "description": "智能托管服务的地址状态信息（用于更新响应）。",
+        "properties": {
+          "address": { "type": "string", "description": "TRON 地址" },
+          "balance": { "type": "string", "description": "剩余可用额度 (格式化字符串)" },
+          "status": { "type": "string", "enum": [ "start", "stop" ], "description": "服务状态 (启用/暂停)" },
+          "net_protect": { "type": "string", "description": "带宽模式", "enum": ["open", "close"]}
+        },
+        "required": [ "address", "balance", "status" ]
+      },
+      "StatisticsDetail": {
+        "type": "object",
+        "description": "单个时间段的智能托管统计详情。",
+        "properties": {
+          "65k": { "type": "integer", "description": "65k 类型操作笔数", "example": 8 },
+          "131k": { "type": "integer", "description": "131k 类型操作笔数", "example": 15 }
+        },
+        "required": [ "65k", "131k" ]
+      },
+      "StatisticsSmartData": {
+        "type": "object",
+        "description": "智能托管服务按地址统计结果。",
+        "properties": {
+          "days": { "type": "object", "description": "最近 5 天的统计 (键为 YYYY-MM-DD)。", "additionalProperties": { "$ref": "#/components/schemas/StatisticsDetail" } },
+          "today": { "$ref": "#/components/schemas/StatisticsDetail", "description": "今日统计" },
+          "yesterday": { "$ref": "#/components/schemas/StatisticsDetail", "description": "昨日统计" },
+          "this_week": { "$ref": "#/components/schemas/StatisticsDetail", "description": "本周统计 (周一至今)" },
+          "this_month": { "$ref": "#/components/schemas/StatisticsDetail", "description": "本月统计 (1号至今)" }
+        },
+        "required": [ "days", "today", "yesterday", "this_week", "this_month" ]
+      },
+      "StatisticsTimesData": {
+        "type": "object",
+        "description": "API笔数 按地址统计结果。",
+        "properties": {
+          "days": { "type": "object", "description": "最近 5 天的统计 (键为 YYYY-MM-DD)。", "additionalProperties": { "type": "integer", "example": 25, "description": "每日总笔数" } },
+          "today": { "type": "integer", "example": 5, "description": "今日总笔数" },
+          "yesterday": { "type": "integer", "example": 8, "description": "昨日总笔数" },
+          "this_week": { "type": "integer", "example": 30, "description": "本周总笔数 (周一至今)" },
+          "this_month": { "type": "integer", "example": 150, "description": "本月总笔数 (1号至今)" }
+        },
+        "required": [ "days", "today", "yesterday", "this_week", "this_month" ]
+      },
+      "PremiumOrderRequest": {
+        "type": "object",
+        "properties": {
+          "username": { "type": "string", "description": "目标 Telegram 用户名 (不含 @)。", "example": "telegram_user" },
+          "month": { "type": "integer", "description": "购买月数。", "enum": [ 3, 6, 12 ], "example": 3 }
+        },
+        "required": [ "username", "month" ]
+      },
+      "StarOrderRequest": {
+        "type": "object",
+        "properties": {
+          "username": { "type": "string", "description": "目标 Telegram 用户名 (不含 @)。", "example": "channel_owner" },
+          "count": { "type": "integer", "description": "购买的星星数量 (50-10000)。", "minimum": 50, "maximum": 10000, "example": 100 }
+        },
+        "required": [ "username", "count" ]
+      },
+      "PremiumOrderResponseData": {
+        "type": "object",
+        "description": "Premium 会员下单成功响应数据。",
+        "properties": {
+          "username": { "type": "string", "description": "目标用户名" },
+          "period": { "type": "string", "description": "购买周期 (例如 \"3month\")" },
+          "order_id": { "type": "integer", "description": "内部订单 ID" },
+          "amount": { "type": "number", "format": "float", "description": "订单金额 (TRX)" },
+          "price": { "type": "number", "format": "float", "description": "价格信息" },
+          "pay_status": { "type": "string", "description": "支付状态" },
+          "status": { "type": "string", "description": "订单处理状态" }
+        },
+        "required": [ "username", "period", "order_id", "amount", "price", "pay_status", "status" ]
+      },
+      "StarOrderResponseData": {
+        "type": "object",
+        "description": "星星下单成功响应数据。",
+        "properties": {
+          "username": { "type": "string", "description": "目标用户名" },
+          "count": { "type": "integer", "description": "购买的星星数量" },
+          "order_id": { "type": "integer", "description": "内部订单 ID" },
+          "amount": { "type": "number", "format": "float", "description": "订单金额 (TRX)" },
+          "price": { "type": "number", "format": "float", "description": "价格信息" },
+          "pay_status": { "type": "string", "description": "支付状态" },
+          "status": { "type": "string", "description": "订单处理状态" }
+        },
+        "required": [ "username", "count", "order_id", "amount", "price", "pay_status", "status" ]
+      },
+      "PremiumQueryResultData": {
+        "type": "object",
+        "description": "Premium 订单查询结果数据。",
+        "properties": {
+          "username": { "type": "string", "nullable": true, "description": "目标用户名" },
+          "nickname": { "type": "string", "nullable": true, "description": "目标用户昵称" },
+          "period": { "type": "string", "nullable": true, "description": "购买周期" },
+          "order_id": { "type": "integer", "description": "订单 ID" },
+          "amount": { "type": "number", "format": "float", "description": "订单金额 (TRX)" },
+          "price": { "type": "number", "format": "float", "description": "价格信息" },
+          "pay_status": { "type": "string", "description": "支付状态" },
+          "status": { "type": "string", "description": "订单处理状态" },
+          "remark": { "type": "string", "nullable": true, "description": "备注/失败原因 (截断后)" },
+          "create_time": { "type": "string", "format": "date-time", "nullable": true, "description": "订单创建时间" }
+        },
+        "required": [ "order_id", "amount", "price", "pay_status", "status" ]
+      },
+      "StarQueryResultData": {
+        "type": "object",
+        "description": "星星订单查询结果数据。",
+        "properties": {
+          "username": { "type": "string", "nullable": true, "description": "目标用户名" },
+          "nickname": { "type": "string", "nullable": true, "description": "目标用户昵称" },
+          "count": { "type": "integer", "nullable": true, "description": "购买的星星数量" },
+          "order_id": { "type": "integer", "description": "订单 ID" },
+          "amount": { "type": "number", "format": "float", "description": "订单金额 (TRX)" },
+          "price": { "type": "number", "format": "float", "description": "价格信息" },
+          "pay_status": { "type": "string", "description": "支付状态" },
+          "status": { "type": "string", "description": "订单处理状态" },
+          "remark": { "type": "string", "nullable": true, "description": "备注/失败原因 (截断后)" },
+          "create_time": { "type": "string", "format": "date-time", "nullable": true, "description": "订单创建时间" }
+        },
+        "required": [ "order_id", "amount", "price", "pay_status", "status" ]
+      },
+      "FastRecoverOrderRequest": {
+        "type": "object",
+        "properties": {
+          "address": { "type": "string", "description": "接收资源的 TRON 地址", "example": "TRecAddresssxxxxxxxxxxxxxxxxxxxxxxx" },
+          "count": { "type": "integer", "description": "需要补充的能量或带宽数量", "example": 65000 },
+          "resource_type": { "type": "string", "description": "资源类型", "enum": ["energy", "net"], "example": "energy" }
+        },
+        "required": ["address", "count", "resource_type"]
+      },
+      "FastRecoverOrderResponseData": {
+        "type": "object",
+        "description": "速充订单查询结果数据。",
+        "properties": {
+          "order_id": { "type": "integer", "description": "内部订单 ID" },
+          "address": { "type": "string", "description": "目标地址" },
+          "energy_count": { "type": "integer", "description": "请求的能量/带宽数量" },
+          "price": { "type": "number", "format": "float", "nullable": true, "description": "单价 (SUN)" },
+          "fee": { "type": "number", "format": "float", "nullable": true, "description": "手续费 (TRX)" },
+          "resource_type": { "type": "string", "description": "资源类型", "enum": ["energy", "net"] },
+          "amount": { "type": "number", "format": "float", "nullable": true, "description": "总金额 (TRX)" },
+          "status": { "type": "string", "description": "订单状态", "enum": ["waiting", "success", "failed"] },
+          "delegate_txid": { "type": "string", "nullable": true, "description": "委托交易哈希" },
+          "reclaim_txid": { "type": "string", "nullable": true, "description": "回收交易哈希" },
+          "actual_recover_count": { "type": "integer", "nullable": true, "description": "实际补充数量" }
+        },
+        "required": ["order_id", "address", "energy_count", "resource_type", "status"]
+      }
+    },
+    "parameters": {
+      "XApiKeyHeader": { "name": "x-api-key", "in": "header", "required": true, "description": "您的 API Key。", "schema": { "type": "string" } },
+      "XTimestampHeader": { "name": "x-timestamp", "in": "header", "required": true, "description": "当前 UNIX 时间戳 (秒)。", "schema": { "type": "integer", "example": 1711961879 } },
+      "XSignatureHeader": { "name": "x-signature", "in": "header", "required": true, "description": "签名 (对 `x-api-key` + `x-timestamp` 进行 HMAC-SHA256 计算得到的小写 Hex 值)。", "schema": { "type": "string", "example": "a1b2c3d4e5f6..." } },
+      "PageParam": { "name": "page", "in": "query", "required": true, "description": "查询的页码 (从1开始)", "schema": { "type": "integer", "minimum": 1, "example": 1 } }
+    }
+  },
+  "security": [ { "ApiKeyAuth": [] } ],
+  "paths": {
+    "/active_account": {
+      "post": {
+        "tags": [ "账户管理 (Account Management)" ],
+        "summary": "激活 TRON 地址",
+        "description": "提交一个激活 TRON 地址的请求。会从账户扣除相应费用。",
+        "operationId": "activeAccountV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": { "required": true, "content": { "application/x-www-form-urlencoded": { "schema": { "type": "object", "properties": { "address": { "type": "string", "description": "需要激活的 TRON 地址", "example": "TNewAddressxxxxxxxxxxxxxxxxxxxxxxx" } }, "required": [ "address" ] } } } },
+        "responses": {
+          "200": { "description": "激活请求已提交。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/ActivationData" } } } ] } } } },
+          "400": { "description": "请求错误 (例如：地址格式无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权 (认证失败)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "禁止访问 (例如：余额不足)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/user_info": {
+      "get": {
+        "tags": [ "账户管理 (Account Management)" ],
+        "summary": "获取用户信息",
+        "description": "获取当前认证用户的基本信息，例如余额。",
+        "operationId": "getUserInfoV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "responses": {
+          "200": { "description": "成功获取用户信息。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/UserInfoData" } } } ] } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/buy_energy": {
+      "post": {
+        "tags": [ "资源订单 (Energy/Bandwidth Orders)" ],
+        "summary": "购买能量时长",
+        "description": "提交一个异步订单，为指定地址在给定周期内委托能量。",
+        "operationId": "buyEnergyV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "count": { "type": "integer", "description": "委托的能量点数 (最低 30000)", "example": 50000 },
+                  "period": { "type": "string", "description": "周期名称 (例如\"15minutes\",\"1h\", \"1day\", \"3day\")", "example": "1day" },
+                  "address": { "type": "string", "description": "接收能量的 TRON 地址", "example": "TRecAddresssxxxxxxxxxxxxxxxxxxxxxxx" }
+
+                },
+                "required": [ "count", "period", "address" ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "订单已成功提交。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/EnergyOrderResponseData" } } } ] } } } },
+          "400": { "description": "请求错误 (参数无效、地址未激活等)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "禁止访问 (余额不足、用户状态异常)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/buy_net": {
+      "post": {
+        "tags": [ "资源订单 (Energy/Bandwidth Orders)" ],
+        "summary": "购买带宽时长",
+        "description": "提交一个异步订单，为指定地址在给定周期内委托带宽。",
+        "operationId": "buyNetV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "count": { "type": "integer", "description": "委托的带宽字节数 (最低 100)", "example": 5000 },
+                  "period": { "type": "string", "description": "周期名称 (例如 \"1day\", \"3day\")", "example": "3day" },
+                  "address": { "type": "string", "description": "接收带宽的 TRON 地址", "example": "TRecAddresssxxxxxxxxxxxxxxxxxxxxxxx" }
+                },
+                "required": [ "count", "period", "address" ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "订单已成功提交。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/NetOrderResponseData" } } } ] } } } },
+          "400": { "description": "请求错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "禁止访问", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/reclaim_energy": {
+      "post": {
+        "tags": [ "资源订单 (Energy/Bandwidth Orders)" ],
+        "summary": "主动回收能量",
+        "description": "根据已完成的订单号和目标地址，发起回收（取消委托）对应资源的请求。这是一个异步操作。",
+        "operationId": "reclaimEnergyV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "order_sn": { "type": "string", "description": "原始委托订单的序列号", "example": "EN2025040217175512345" },
+                  "address": { "type": "string", "description": "原始接收委托资源的地址", "example": "TRecAddresssxxxxxxxxxxxxxxxxxxxxxxx" }
+                },
+                "required": [ "order_sn", "address" ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "回收请求已成功提交。", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BaseResponse" } } } },
+          "400": { "description": "请求错误 (订单号或地址格式无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (订单号不存在、不属于该用户，或未找到匹配的可回收资源)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/query_result": {
+      "get": {
+        "tags": [ "资源订单 (Energy/Bandwidth Orders)" ],
+        "summary": "查询订单结果",
+        "description": "获取指定资源订单的处理状态和详细信息。",
+        "operationId": "queryResultV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "order_sn", "in": "query", "required": true, "description": "要查询的订单的唯一序列号", "schema": { "type": "string", "example": "EN2025040217175512345" } } ],
+        "responses": {
+          "200": {
+            "description": "成功获取订单详情。data 结构根据订单状态可能是成功详情或失败信息。",
+            "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "oneOf": [ { "$ref": "#/components/schemas/QueryResultDataSuccess" }, { "$ref": "#/components/schemas/QueryResultDataFailed" } ] } } } ] } } }
+          },
+          "400": { "description": "请求错误 (订单号格式无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (订单号不存在或不属于该用户)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误或查询异常", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/query_price": {
+      "get": {
+        "tags": [ "资源订单 (Energy/Bandwidth Orders)" ],
+        "summary": "查询资源价格",
+        "description": "根据资源类型（仅支持 energy 或 net）、数量和周期，计算预估的订购价格。",
+        "operationId": "queryPriceV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "type", "in": "query", "required": true, "description": "资源类型 (\"energy\", \"net\")", "schema": { "type": "string", "enum": ["energy", "net"], "example": "energy" } }, { "name": "count", "in": "query", "required": true, "description": "资源数量 (能量点数或带宽字节数)", "schema": { "type": "integer", "example": 50000 } }, { "name": "period", "in": "query", "required": true, "description": "周期名称 (例如 \"15minutes\",\"1h\", \"1day\", \"3day\")", "schema": { "type": "string", "example": "1day" } } ],
+        "responses": {
+          "200": { "description": "成功计算价格。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/ResourcePriceData" } } } ] } } } },
+          "400": { "description": "请求错误 (参数无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (指定资源的价格未配置或不可用)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+
+    "/query_fast_recover_price": {
+      "post": {
+        "tags": [ "能量速充 (Fast Recover)" ],
+        "summary": "查询能量/带宽速充价格",
+        "description": "查询速冲价格",
+        "operationId": "queryFastRecoverPriceV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "resource_type", "in": "query", "required": true, "description": "资源类型 (\"energy\", \"net\")", "schema": { "type": "string", "enum": ["energy", "net"], "example": "energy" } }, { "name": "count", "in": "query", "required": true, "description": "资源数量 (能量数或带宽数)", "schema": { "type": "integer", "example": 100000 } } ],
+        "responses": {
+          "200": { "description": "成功计算价格。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/FastRecoverPriceData" } } } ] } } } },
+          "400": { "description": "请求错误 (参数无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (指定资源的价格未配置或不可用)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+
+    "/buy_fast_recover": {
+      "post": {
+        "tags": [ "能量速充 (Fast Recover)" ],
+        "summary": "能量/带宽速充",
+        "description": "为指定地址快速补充一次性的能量或带宽。",
+        "operationId": "buyFastRecoverV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/x-www-form-urlencoded": { "schema": { "$ref": "#/components/schemas/FastRecoverOrderRequest" } } }
+        },
+        "responses": {
+          "200": { "description": "速充请求已提交，请稍后查询状态。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "type": "object", "properties": { "order_id": { "type": "integer", "description": "速充订单ID" } } } } } ] } } } },
+          "400": { "description": "请求错误 (参数无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "禁止访问 (例如余额不足)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/query_fast_recover_order": {
+      "get": {
+        "tags": [ "能量速充 (Fast Recover)" ],
+        "summary": "查询速充订单状态",
+        "description": "获取指定速充订单的处理状态和详情。",
+        "operationId": "queryFastRecoverOrderV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "order_id", "in": "query", "required": true, "description": "要查询的速充订单 ID", "schema": { "type": "integer", "example": 123 } } ],
+        "responses": {
+          "200": { "description": "查询成功。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/FastRecoverOrderResponseData" } } } ] } } } },
+          "400": { "description": "请求错误 (订单 ID 无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (订单 ID 不存在或不属于当前用户)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/get_smart_price": {
+      "get": {
+        "tags": [ "智能托管 (Smart Delegation)" ],
+        "summary": "获取智能托管价格",
+        "description": "获取当前 65K 和 131K 智能能量委托的价格。",
+        "operationId": "getSmartPriceV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "responses": {
+          "200": { "description": "成功获取价格。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/SmartPriceData" } } } ] } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (无法获取部分或全部价格信息)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/get_times_price": {
+      "get": {
+        "tags": [ "能量笔数 (Energy Times)" ],
+        "summary": "获取API笔数价格",
+        "description": "获取当前API笔数的单次交易价格。",
+        "operationId": "getTimesPriceV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "responses": {
+          "200": { "description": "成功获取价格。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/TimesPriceData" } } } ] } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (无法获取价格信息)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/delegate_energy_times": {
+      "post": {
+        "tags": [ "能量笔数 (Energy Times)" ],
+        "summary": "委托API笔数",
+        "description": "为指定地址增加指定能量笔数（按次计费）。",
+        "operationId": "delegateEnergyTimesV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": { "required": true, "content": { "application/x-www-form-urlencoded": { "schema": { "type": "object", "properties": { "address": { "type": "string", "description": "要增加笔数的 TRON 地址", "example": "TDelAddressxxxxxxxxxxxxxxxxxxxxxxx" }, "times": { "type": "integer", "description": "要增加的能量委托笔数 (必须为正整数)", "example": 100 } }, "required": [ "address", "times" ] } } } },
+        "responses": {
+          "200": { "description": "委托成功。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/EnergyTimesDelegateResponseData" } } } ] } } } },
+          "400": { "description": "请求错误 (地址或笔数无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "请求过于频繁 (如果实现了锁)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误 (例如数据库错误)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/query_energy_times": {
+      "get": {
+        "tags": [ "能量笔数 (Energy Times)" ],
+        "summary": "查询API笔数状态",
+        "description": "获取指定地址的剩余能量笔数、服务状态以及消耗记录（分页）。",
+        "operationId": "queryEnergyTimesV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "address", "in": "query", "required": true, "description": "要查询的 TRON 地址", "schema": { "type": "string", "example": "TDelAddressxxxxxxxxxxxxxxxxxxxxxxx" } }, { "$ref": "#/components/parameters/PageParam" } ],
+        "responses": {
+          "200": { "description": "查询成功。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/EnergyTimesQueryResponseData" } } } ] } } } },
+          "400": { "description": "请求错误 (地址格式或页码无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (该地址未开通此服务或不属于当前用户)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/update_energy_times": {
+      "post": {
+        "tags": [ "能量笔数 (Energy Times)" ],
+        "summary": "更新地址的API笔数状态",
+        "description": "启用 (\"start\") 或暂停 (\"stop\") 指定地址的API笔数服务。",
+        "operationId": "updateEnergyTimesV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": { "required": true, "content": { "application/x-www-form-urlencoded": { "schema": { "type": "object", "properties": { "address": { "type": "string", "description": "要更新状态的 TRON 地址", "example": "TDelAddressxxxxxxxxxxxxxxxxxxxxxxx" }, "status": { "type": "string", "description": "目标状态", "enum": [ "start", "stop" ], "example": "stop" } }, "required": [ "address", "status" ] } } } },
+        "responses": {
+          "200": { "description": "状态更新成功，返回当前状态。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/EnergyTimesData" } } } ] } } } },
+          "400": { "description": "请求错误 (地址、状态值无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (该地址未开通此服务或不属于当前用户)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "409": { "description": "冲突 (已经是目标状态)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "请求过于频繁 (如果实现了锁)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/delegate_energy_smart": {
+      "post": {
+        "tags": [ "智能托管 (Smart Delegation)" ],
+        "summary": "委托智能托管额度",
+        "description": "为指定地址增加智能能量托管服务的可用额度（余额）。",
+        "operationId": "delegateEnergySmartV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": { "required": true, "content": { "application/x-www-form-urlencoded": { "schema": { "type": "object",
+          "properties": {
+            "address": { "type": "string", "description": "要增加额度的 TRON 地址", "example": "TSmartAddressxxxxxxxxxxxxxxxxxxxxx" },
+            "balance": { "type": "number", "format": "float", "description": "要增加的额度数量 (例如 TRX 数量，必须为正数)", "example": 10.5 },
+            "channel": { "type": "string", "description": "能量通道：normal->普通模式，high_frequency->高频模式,jisu_frequency->极速模式,guangsu_frequency->光速模式", "enum":["normal","high_frequency","jisu_frequency","guangsu_frequency"],"example": "high_frequency" },
+            "hf_deposit": { "type": "number", "description": "高频押金：-1：跟随系统押金设置   0:不扣押金     其他金额:扣除相应押金", "example": "0" },
+            "net_protect": { "type": "string",  "description": "地址的带宽保护模式", "enum": [ "open", "close" ],"example": "open" }
+          },
+          "required": [ "address", "balance" ] } } } },
+        "responses": {
+          "200": { "description": "委托/额度增加成功", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/EnergySmartDelegateResponseData" } } } ] } } } },
+          "400": { "description": "请求错误 (地址或额度值无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "请求过于频繁 (如果实现了锁)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/query_energy_smart": {
+      "get": {
+        "tags": [ "智能托管 (Smart Delegation)" ],
+        "summary": "查询智能托管状态",
+        "description": "获取指定地址的智能能量托管服务的剩余额度（余额）、服务状态以及消耗记录（分页）。",
+        "operationId": "queryEnergySmartV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "address", "in": "query", "required": true, "description": "要查询的 TRON 地址", "schema": { "type": "string", "example": "TSmartAddressxxxxxxxxxxxxxxxxxxxxx" } }, { "$ref": "#/components/parameters/PageParam" } ],
+        "responses": {
+          "200": { "description": "查询成功。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/EnergySmartQueryResponseData" } } } ] } } } },
+          "400": { "description": "请求错误 (地址格式或页码无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (该地址未开通此服务或不属于当前用户)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/update_energy_smart": {
+      "post": {
+        "tags": [ "智能托管 (Smart Delegation)" ],
+        "summary": "更新智能托管状态",
+        "description": "启用 (\"start\") 或暂停 (\"stop\") 指定地址的智能能量托管服务。",
+        "operationId": "updateEnergySmartV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": { "required": true, "content": { "application/x-www-form-urlencoded": { "schema": { "type": "object", "properties": { "address": { "type": "string", "description": "要更新状态的 TRON 地址", "example": "TSmartAddressxxxxxxxxxxxxxxxxxxxxx" }, "status": { "type": "string", "description": "目标状态", "enum": [ "start", "stop" ], "example": "start" } ,"net_protect": { "type": "string",  "description": "地址的带宽保护模式","enum": [ "open", "close" ], "example": "open" }}, "required": [ "address", "status" ] } } } },
+        "responses": {
+          "200": { "description": "状态更新成功，返回当前状态。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/EnergySmartData" } } } ] } } } },
+          "400": { "description": "请求错误 (地址、状态值无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (该地址未开通此服务或不属于当前用户)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "409": { "description": "冲突 (已经是目标状态)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "429": { "description": "请求过于频繁 (如果实现了锁)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/statistics_smart_by_address": {
+      "get": {
+        "tags": [ "智能托管 (Smart Delegation)" ],
+        "summary": "获取智能托管地址统计",
+        "description": "获取指定地址在不同时间段内（今日、昨日、本周、本月、近5天）的智能能量服务消耗统计（区分 65k/131k 类型）。",
+        "operationId": "statisticsSmartByAddressV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "address", "in": "query", "required": true, "description": "要获取统计的 TRON 地址", "schema": { "type": "string", "example": "TSmartAddressxxxxxxxxxxxxxxxxxxxxx" } } ],
+        "responses": {
+          "200": { "description": "成功获取统计数据。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/StatisticsSmartData" } } } ] } } } },
+          "400": { "description": "请求错误 (地址格式无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/statistics_times_by_address": {
+      "get": {
+        "tags": [ "能量笔数 (Energy Times)" ],
+        "summary": "获取 API能量笔数 地址统计",
+        "description": "获取指定地址在不同时间段内（今日、昨日、本周、本月、近5天）的 API能量笔数 消耗数量统计。",
+        "operationId": "statisticsTimesByAddressV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "address", "in": "query", "required": true, "description": "要获取统计的 TRON 地址", "schema": { "type": "string", "example": "TDelAddressxxxxxxxxxxxxxxxxxxxxxxx" } } ],
+        "responses": {
+          "200": { "description": "成功获取统计数据。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/StatisticsTimesData" } } } ] } } } },
+          "400": { "description": "请求错误 (地址格式无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/submit_converge_address": {
+      "post": {
+        "tags": [ "地址归集 (Converge Address)" ],
+        "summary": "提交地址归集配置",
+        "description": "为一个 TRON 地址配置自动 USDT 归集的规则。",
+        "operationId": "submitConvergeAddressV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": { "required": true, "content": { "application/x-www-form-urlencoded": { "schema": { "type": "object", "properties": { "address": { "type": "string", "description": "要配置归集的 TRON 地址", "example": "TConvergeAddressxxxxxxxxxxxxxxxxxx" }, "mode": { "type": "string", "description": "归集模式", "enum": [ "once", "keep" ], "example": "keep" }, "transfer_threshold": { "type": "number", "format": "float", "description": "触发归集的最低余额阈值", "example": 100.0 }, "balance_min": { "type": "number", "format": "float", "description": "归集后地址保留的最低余额", "example": 10.0 }, "balance_max": { "type": "number", "format": "float", "description": "归集后地址允许保留的最高余额 (需 >= min)", "example": 20.0 }, "energy_count": { "type": "integer", "description": "为归集操作提供的能量数量", "example": 65000 }, "type": { "type": "string", "description": "为地址提供的服务类型", "enum": [ "energy", "all" ], "example": "all" }, "notify_callback": { "type": "string", "format": "url", "nullable": true, "description": "可选，接收归集通知的回调 URL", "example": "https://yourcallback.com/notify" } }, "required": [ "address", "mode", "transfer_threshold", "balance_min", "balance_max", "energy_count", "type" ] } } } },
+        "responses": {
+          "200": { "description": "配置提交成功", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BaseResponse" } } } },
+          "400": { "description": "请求错误 (参数无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "409": { "description": "冲突 (该地址已存在启用中的配置)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/buy_premium": {
+      "post": {
+        "tags": [ "Fragment 服务 (Premium/Stars Service)" ],
+        "summary": "购买 Telegram Premium 会员",
+        "description": "创建一个为指定 Telegram 用户赠送 Premium 会员的订单。",
+        "operationId": "buyPremiumV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": { "required": true, "content": { "application/x-www-form-urlencoded": { "schema": { "$ref": "#/components/schemas/PremiumOrderRequest" } } } },
+        "responses": {
+          "200": { "description": "订单提交成功。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/PremiumOrderResponseData" } } } ] } } } },
+          "400": { "description": "请求错误 (用户名或月数无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "禁止访问 (余额不足)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/query_premium_order": {
+      "get": {
+        "tags": [ "Fragment 服务 (Premium/Stars Service)" ],
+        "summary": "查询 Premium 会员订单状态",
+        "description": "获取指定 Premium 会员订单的处理状态和详情。",
+        "operationId": "queryPremiumOrderV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "order_id", "in": "query", "required": true, "description": "要查询的内部订单 ID", "schema": { "type": "integer", "example": 5678 } } ],
+        "responses": {
+          "200": { "description": "成功获取订单详情。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/PremiumQueryResultData" } } } ] } } } },
+          "400": { "description": "请求错误 (订单 ID 无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (订单 ID 不存在或不属于当前用户)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/buy_star": {
+      "post": {
+        "tags": [ "Fragment 服务 (Premium/Stars Service)" ],
+        "summary": "购买 Telegram 星星",
+        "description": "创建一个向指定 Telegram 用户发送星星的订单。",
+        "operationId": "buyStarV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" } ],
+        "requestBody": { "required": true, "content": { "application/x-www-form-urlencoded": { "schema": { "$ref": "#/components/schemas/StarOrderRequest" } } } },
+        "responses": {
+          "200": { "description": "订单提交成功。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/StarOrderResponseData" } } } ] } } } },
+          "400": { "description": "请求错误 (用户名或数量无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "禁止访问 (余额不足)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    },
+    "/query_star_order": {
+      "get": {
+        "tags": [ "Fragment 服务 (Premium/Stars Service)" ],
+        "summary": "查询星星订单状态",
+        "description": "获取指定星星订单的处理状态和详情。",
+        "operationId": "queryStarOrderV2",
+        "parameters": [ { "$ref": "#/components/parameters/XApiKeyHeader" }, { "$ref": "#/components/parameters/XTimestampHeader" }, { "$ref": "#/components/parameters/XSignatureHeader" }, { "name": "order_id", "in": "query", "required": true, "description": "要查询的内部订单 ID", "schema": { "type": "integer", "example": 91011 } } ],
+        "responses": {
+          "200": { "description": "成功获取订单详情。", "content": { "application/json": { "schema": { "allOf": [ { "$ref": "#/components/schemas/BaseResponse" }, { "type": "object", "properties": { "data": { "$ref": "#/components/schemas/StarQueryResultData" } } } ] } } } },
+          "400": { "description": "请求错误 (订单 ID 无效)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "未授权", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "404": { "description": "未找到 (订单 ID 不存在或不属于当前用户)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "500": { "description": "服务器内部错误", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        }
+      }
+    }
+  }
+}
