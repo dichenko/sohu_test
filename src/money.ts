@@ -27,6 +27,46 @@ export type Settlement = {
   netDebitMicros: bigint;
 };
 
+export type ProviderCreditPlan = {
+  thresholdMicros: bigint;
+  requiredTopUpMicros: bigint;
+  requestedTopUpMicros: bigint;
+  feeReserveMicros: bigint;
+  needsTopUp: boolean;
+  canTopUp: boolean;
+};
+
+export function calculateProviderCreditPlan(input: {
+  currentCreditMicros: bigint;
+  userBalanceMicros: bigint;
+  price131Micros: bigint;
+  feeMicros: bigint;
+  reserveOrders: number;
+  configuredTopUpMicros: bigint;
+}): ProviderCreditPlan {
+  const orders = BigInt(input.reserveOrders);
+  const thresholdMicros = input.price131Micros * orders;
+  const feeReserveMicros = input.feeMicros * orders;
+  const requiredTopUpMicros = input.currentCreditMicros < thresholdMicros
+    ? thresholdMicros - input.currentCreditMicros
+    : 0n;
+  const maximumBackedTopUp = input.userBalanceMicros > input.currentCreditMicros + feeReserveMicros
+    ? input.userBalanceMicros - input.currentCreditMicros - feeReserveMicros
+    : 0n;
+  const requestedTopUpMicros = input.configuredTopUpMicros < maximumBackedTopUp
+    ? input.configuredTopUpMicros
+    : maximumBackedTopUp;
+  const needsTopUp = requiredTopUpMicros > 0n;
+  return {
+    thresholdMicros,
+    requiredTopUpMicros,
+    requestedTopUpMicros,
+    feeReserveMicros,
+    needsTopUp,
+    canTopUp: !needsTopUp || requestedTopUpMicros >= requiredTopUpMicros
+  };
+}
+
 export function calculateSettlement(input: {
   energyType?: string | null;
   delegateCount?: number | null;

@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Config } from "./config.js";
 import type { Db } from "./db.js";
 import { transaction } from "./db.js";
 import type { Logger } from "./logger.js";
-import { calculateSettlement, microsToTrx, trxToMicros } from "./money.js";
+import { calculateProviderCreditPlan, calculateSettlement, microsToTrx, trxToMicros } from "./money.js";
 import {
   activateSubscription,
   applyLedgerEntry,
@@ -12,13 +12,16 @@ import {
   getLatestPrices,
   getSubscription,
   getUserBalance,
+  finishProviderTopUp,
   logAudit,
   markSubscriptionError,
+  pauseSubscriptionWithReason,
   savePriceSnapshot,
   setSubscriptionStatus,
+  startProviderTopUp,
   updateProviderSnapshot
 } from "./repository.js";
-import { SohuClient } from "./sohu.js";
+import { SohuApiError, SohuClient } from "./sohu.js";
 import type { SmartOrder, Subscription } from "./types.js";
 
 export type UserNotification = { text: string; parseMode?: "HTML" };
@@ -167,10 +170,143 @@ export class AutochargingService {
     const balance = await getUserBalance(this.db, BigInt(subscription.user_telegram_id));
     const nextReserve = prices.price131Micros + trxToMicros(this.config.SERVICE_FEE_TRX);
     if (subscription.status === "active" && balance < nextReserve) {
-      await this.sohu.updateEnergy(subscription.tron_address, "stop");
-      await setSubscriptionStatus(this.db, subscription.id, "low_balance", "stop");
-      await notify({ text: `⚠️ Автозаряд поставлен на паузу: баланс ${microsToTrx(balance)} TRX меньше резерва следующего списания ${microsToTrx(nextReserve)} TRX.` });
+      await this.pauseForReason(
+        subscription,
+        `Баланс клиента ${microsToTrx(balance)} TRX меньше резерва следующего списания ${microsToTrx(nextReserve)} TRX`,
+        notify
+      );
+      return;
     }
+    if (subscription.status === "active") {
+      await this.ensureProviderCredit(subscription, latestProviderBalance, balance, prices, notify);
+    }
+  }
+
+  private async ensureProviderCredit(
+    subscription: Subscription,
+    providerBalanceMicros: bigint,
+    userBalanceMicros: bigint,
+    prices: { price65Micros: bigint; price131Micros: bigint },
+    notify: (notification: UserNotification) => Promise<void>
+  ): Promise<void> {
+    const plan = calculateProviderCreditPlan({
+      currentCreditMicros: providerBalanceMicros,
+      userBalanceMicros,
+      price131Micros: prices.price131Micros,
+      feeMicros: trxToMicros(this.config.SERVICE_FEE_TRX),
+      reserveOrders: this.config.SOHU_CREDIT_RESERVE_ORDERS,
+      configuredTopUpMicros: trxToMicros(this.config.SOHU_CREDIT_TOPUP_TRX)
+    });
+    if (!plan.needsTopUp) return;
+    await logAudit(this.db, {
+      eventType: "provider.credit.low",
+      entityType: "subscription",
+      entityId: subscription.id,
+      payload: {
+        provider_balance_micros: providerBalanceMicros.toString(),
+        threshold_micros: plan.thresholdMicros.toString(),
+        requested_topup_micros: plan.requestedTopUpMicros.toString(),
+        user_balance_micros: userBalanceMicros.toString()
+      }
+    });
+    if (!plan.canTopUp) {
+      await this.pauseForReason(
+        subscription,
+        `Кредит Sohu ${microsToTrx(providerBalanceMicros)} TRX ниже порога ${microsToTrx(plan.thresholdMicros)} TRX, а клиентский баланс не покрывает безопасное пополнение`,
+        notify
+      );
+      return;
+    }
+
+    const operationKey = randomUUID();
+    await startProviderTopUp(this.db, {
+      subscriptionId: subscription.id,
+      operationKey,
+      requestedMicros: plan.requestedTopUpMicros,
+      balanceBeforeMicros: providerBalanceMicros
+    });
+    try {
+      const response = await this.sohu.topUpEnergy(subscription.tron_address, microsToTrx(plan.requestedTopUpMicros));
+      const balanceAfter = trxToMicros(response.data.balance);
+      await finishProviderTopUp(this.db, {
+        operationKey,
+        status: "succeeded",
+        balanceAfterMicros: balanceAfter,
+        response
+      });
+      await updateProviderSnapshot(this.db, subscription.id, balanceAfter, response.data.status);
+      await logAudit(this.db, { eventType: "provider.credit.topup.succeeded", entityType: "subscription", entityId: subscription.id, payload: { operationKey, response } });
+      await notify({ text: `🔄 Технический кредит Sohu пополнен на ${microsToTrx(plan.requestedTopUpMicros)} TRX. Новый остаток Sohu: ${microsToTrx(balanceAfter)} TRX. Клиентский баланс сейчас не списывался.` });
+    } catch (error) {
+      const originalError = error instanceof Error ? error.message : String(error);
+      let reconciliation: unknown = null;
+      let observedBalance: bigint | undefined;
+      try {
+        reconciliation = await this.sohu.queryEnergy(subscription.tron_address, 1);
+        observedBalance = trxToMicros((reconciliation as Awaited<ReturnType<SohuClient["queryEnergy"]>>).data.balance);
+      } catch (reconciliationError) {
+        this.logger.error({ err: reconciliationError, operationKey }, "Provider credit reconciliation failed");
+      }
+
+      // A concurrent energy issue may consume part of the new credit before reconciliation.
+      // Any increase over the pre-request balance confirms that Sohu applied the funding.
+      if (observedBalance !== undefined && observedBalance > providerBalanceMicros) {
+        await finishProviderTopUp(this.db, {
+          operationKey,
+          status: "reconciled",
+          balanceAfterMicros: observedBalance,
+          response: reconciliation,
+          error: originalError
+        });
+        await updateProviderSnapshot(this.db, subscription.id, observedBalance, "start");
+        await logAudit(this.db, { eventType: "provider.credit.topup.reconciled", entityType: "subscription", entityId: subscription.id, payload: { operationKey, originalError, observed_balance_micros: observedBalance.toString() } });
+        await notify({ text: `🔄 Пополнение кредита Sohu на ${microsToTrx(plan.requestedTopUpMicros)} TRX подтверждено повторной проверкой после ошибки ответа. Повторный платёж не отправлялся.` });
+        return;
+      }
+
+      const definitelyRejected = error instanceof SohuApiError
+        && error.status !== undefined
+        && error.status >= 400
+        && error.status < 500
+        && ![408, 429].includes(error.status);
+      const uncertain = observedBalance === undefined || !definitelyRejected;
+      await finishProviderTopUp(this.db, {
+        operationKey,
+        status: uncertain ? "uncertain" : "failed",
+        balanceAfterMicros: observedBalance,
+        response: reconciliation,
+        error: originalError
+      });
+      await logAudit(this.db, { eventType: uncertain ? "provider.credit.topup.uncertain" : "provider.credit.topup.failed", entityType: "subscription", entityId: subscription.id, payload: { operationKey, originalError, observed_balance_micros: observedBalance?.toString() } });
+      await this.pauseForReason(
+        subscription,
+        uncertain
+          ? `Результат пополнения Sohu на ${microsToTrx(plan.requestedTopUpMicros)} TRX не удалось подтвердить; автоматический повтор запрещён`
+          : `Sohu не пополнил технический кредит: ${originalError}`,
+        notify
+      );
+    }
+  }
+
+  private async pauseForReason(
+    subscription: Subscription,
+    reason: string,
+    notify: (notification: UserNotification) => Promise<void>
+  ): Promise<void> {
+    let providerStopConfirmed = false;
+    let stopError: string | undefined;
+    try {
+      await this.sohu.updateEnergy(subscription.tron_address, "stop");
+      providerStopConfirmed = true;
+    } catch (error) {
+      stopError = error instanceof Error ? error.message : String(error);
+      this.logger.error({ err: error, subscriptionId: subscription.id }, "Could not confirm provider stop");
+    }
+    await pauseSubscriptionWithReason(this.db, subscription.id, reason, providerStopConfirmed);
+    await logAudit(this.db, { eventType: "subscription.paused.automatically", entityType: "subscription", entityId: subscription.id, payload: { reason, providerStopConfirmed, stopError } });
+    await notify({
+      text: `⚠️ Автозаряд поставлен на паузу.\nПричина: ${reason}.${providerStopConfirmed ? "" : "\nОстановку на стороне Sohu подтвердить не удалось — требуется ручная проверка."}`
+    });
   }
 
   private async processOrder(

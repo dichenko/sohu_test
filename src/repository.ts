@@ -90,6 +90,52 @@ export async function setSubscriptionStatus(db: Db, subscriptionId: string, stat
   );
 }
 
+export async function pauseSubscriptionWithReason(db: Db, subscriptionId: string, reason: string, providerStopConfirmed: boolean): Promise<void> {
+  await db.query(
+    `UPDATE autocharging_subscriptions
+     SET status = 'paused', souhu_status = CASE WHEN $3 THEN 'stop' ELSE souhu_status END,
+         last_error = $2, updated_at = now()
+     WHERE id = $1`,
+    [subscriptionId, reason.slice(0, 2000), providerStopConfirmed]
+  );
+}
+
+export async function startProviderTopUp(db: Db, input: {
+  subscriptionId: string;
+  operationKey: string;
+  requestedMicros: bigint;
+  balanceBeforeMicros: bigint;
+}): Promise<void> {
+  await db.query(
+    `INSERT INTO provider_credit_topups
+      (subscription_id, operation_key, requested_micros, balance_before_micros, status)
+     VALUES ($1, $2, $3, $4, 'started')`,
+    [input.subscriptionId, input.operationKey, input.requestedMicros.toString(), input.balanceBeforeMicros.toString()]
+  );
+}
+
+export async function finishProviderTopUp(db: Db, input: {
+  operationKey: string;
+  status: "succeeded" | "reconciled" | "failed" | "uncertain";
+  balanceAfterMicros?: bigint;
+  response?: unknown;
+  error?: string;
+}): Promise<void> {
+  await db.query(
+    `UPDATE provider_credit_topups
+     SET status = $2, balance_after_micros = $3, provider_response = $4::jsonb,
+         error = $5, completed_at = now()
+     WHERE operation_key = $1`,
+    [
+      input.operationKey,
+      input.status,
+      input.balanceAfterMicros?.toString() ?? null,
+      JSON.stringify(input.response ?? null),
+      input.error?.slice(0, 2000) ?? null
+    ]
+  );
+}
+
 export async function savePriceSnapshot(db: Db, input: { channel: string; price65Micros: bigint; price131Micros: bigint; raw: unknown }): Promise<void> {
   await db.query(
     "INSERT INTO price_snapshots(channel, price_65k_micros, price_131k_micros, raw_payload) VALUES ($1, $2, $3, $4::jsonb)",

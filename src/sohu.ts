@@ -32,6 +32,16 @@ export class SohuClient {
     );
   }
 
+  topUpEnergy(address: string, balanceTrx: string) {
+    // Repeated funding deliberately omits hf_deposit: sending it again may retain a second deposit.
+    return this.request<{ address: string; balance: string; status: "start" | "stop"; net_protect?: string }>(
+      "POST",
+      "/delegate_energy_smart",
+      undefined,
+      { address, balance: balanceTrx }
+    );
+  }
+
   queryEnergy(address: string, page = 1) {
     return this.request<SmartQueryData>("GET", "/query_energy_smart", { address, page: String(page) });
   }

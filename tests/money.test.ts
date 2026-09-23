@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateSettlement, microsToTrx, trxToMicros } from "../src/money.js";
+import { calculateProviderCreditPlan, calculateSettlement, microsToTrx, trxToMicros } from "../src/money.js";
 
 describe("money", () => {
   it("converts TRX without floating point loss", () => {
@@ -32,5 +32,35 @@ describe("money", () => {
     });
     expect(result.refundMicros).toBe(0n);
     expect(result.netDebitMicros).toBe(3_700_000n);
+  });
+});
+
+describe("provider credit planning", () => {
+  it("tops up when Sohu credit drops below two 131K orders", () => {
+    const plan = calculateProviderCreditPlan({
+      currentCreditMicros: 5_000_000n,
+      userBalanceMicros: 80_000_000n,
+      price131Micros: 3_400_000n,
+      feeMicros: 300_000n,
+      reserveOrders: 2,
+      configuredTopUpMicros: 20_000_000n
+    });
+    expect(plan.thresholdMicros).toBe(6_800_000n);
+    expect(plan.requestedTopUpMicros).toBe(20_000_000n);
+    expect(plan.canTopUp).toBe(true);
+  });
+
+  it("refuses an unbacked top-up", () => {
+    const plan = calculateProviderCreditPlan({
+      currentCreditMicros: 1_000_000n,
+      userBalanceMicros: 3_000_000n,
+      price131Micros: 3_400_000n,
+      feeMicros: 300_000n,
+      reserveOrders: 2,
+      configuredTopUpMicros: 20_000_000n
+    });
+    expect(plan.requiredTopUpMicros).toBe(5_800_000n);
+    expect(plan.requestedTopUpMicros).toBe(1_400_000n);
+    expect(plan.canTopUp).toBe(false);
   });
 });
