@@ -13,6 +13,7 @@ const schema = z.object({
   SOHU_INITIAL_CREDIT_TRX: z.coerce.number().positive().default(20),
   SOHU_CREDIT_RESERVE_ORDERS: z.coerce.number().int().min(1).max(20).default(2),
   SOHU_CREDIT_TOPUP_TRX: z.coerce.number().positive().default(20),
+  SOHU_CREDIT_TOPUP_COOLDOWN_SECONDS: z.coerce.number().int().min(60).max(86400).default(900),
   SOHU_NET_PROTECT: z.enum(["open", "close"]).default("open"),
   SOHU_POLL_INTERVAL_SECONDS: z.coerce.number().int().min(30).max(3600).default(90),
   SOHU_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120000).default(20000),

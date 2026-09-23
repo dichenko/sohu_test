@@ -13,6 +13,7 @@ import {
   getSubscription,
   getUserBalance,
   finishProviderTopUp,
+  getRecentProviderTopUp,
   logAudit,
   markSubscriptionError,
   pauseSubscriptionWithReason,
@@ -38,10 +39,13 @@ export class AutochargingService {
 
   async currentPrices(): Promise<{ price65Micros: bigint; price131Micros: bigint }> {
     const envelope = await this.sohu.getSmartPrice();
-    const data = envelope.data as Record<string, unknown>;
+    const data = (envelope.data ?? {}) as Record<string, unknown>;
     const channel = data.high_frequency as Record<string, unknown> | undefined;
-    const raw65 = channel?.["65k_price"];
-    const raw131 = channel?.["131k_price"];
+    // Swagger declares top-level 65K_price/131K_price, while some responses
+    // return the Pro values under high_frequency. Accept both shapes and keep
+    // the raw response in price_snapshots for later comparison.
+    const raw65 = channel?.["65k_price"] ?? channel?.["65K_price"] ?? data["65K_price"] ?? data["65k_price"];
+    const raw131 = channel?.["131k_price"] ?? channel?.["131K_price"] ?? data["131K_price"] ?? data["131k_price"];
     if (raw65 == null || raw131 == null) throw new Error("Sohu response has no high_frequency 65k/131k prices");
     const prices = { price65Micros: trxToMicros(String(raw65)), price131Micros: trxToMicros(String(raw131)) };
     await savePriceSnapshot(this.db, { channel: "high_frequency", ...prices, raw: envelope });
@@ -119,7 +123,18 @@ export class AutochargingService {
         prices = await this.currentPrices();
       } catch (error) {
         const cached = await getLatestPrices(this.db);
-        if (!cached) throw error;
+        if (!cached) {
+          // A malformed/changed price response must not terminate Telegram
+          // polling. The raw provider response and error are already in
+          // provider_http_logs; retry on the next scheduled sync.
+          this.logger.error({ err: error }, "Sohu prices unavailable; skipping this sync cycle");
+          await logAudit(this.db, {
+            eventType: "provider.price.unavailable",
+            entityType: "provider_account",
+            payload: { error: error instanceof Error ? error.message : String(error) }
+          });
+          return;
+        }
         prices = cached;
         this.logger.warn({ err: error }, "Using cached Sohu prices");
       }
@@ -215,6 +230,17 @@ export class AutochargingService {
         `Кредит Sohu ${microsToTrx(providerBalanceMicros)} TRX ниже порога ${microsToTrx(plan.thresholdMicros)} TRX, а клиентский баланс не покрывает безопасное пополнение`,
         notify
       );
+      return;
+    }
+
+    const recentTopUp = await getRecentProviderTopUp(this.db, subscription.id, this.config.SOHU_CREDIT_TOPUP_COOLDOWN_SECONDS);
+    if (recentTopUp) {
+      await logAudit(this.db, {
+        eventType: "provider.credit.topup.cooldown",
+        entityType: "subscription",
+        entityId: subscription.id,
+        payload: { operationKey: recentTopUp.operation_key, status: recentTopUp.status, createdAt: recentTopUp.created_at }
+      });
       return;
     }
 

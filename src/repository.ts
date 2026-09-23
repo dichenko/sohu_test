@@ -136,6 +136,19 @@ export async function finishProviderTopUp(db: Db, input: {
   );
 }
 
+export async function getRecentProviderTopUp(db: Db, subscriptionId: string, cooldownSeconds: number): Promise<{ operation_key: string; status: string; created_at: Date } | null> {
+  const result = await db.query<{ operation_key: string; status: string; created_at: Date }>(
+    `SELECT operation_key, status, created_at
+     FROM provider_credit_topups
+     WHERE subscription_id = $1
+       AND status IN ('started', 'succeeded', 'reconciled')
+       AND created_at > now() - ($2::text || ' seconds')::interval
+     ORDER BY created_at DESC LIMIT 1`,
+    [subscriptionId, String(cooldownSeconds)]
+  );
+  return result.rows[0] ?? null;
+}
+
 export async function savePriceSnapshot(db: Db, input: { channel: string; price65Micros: bigint; price131Micros: bigint; raw: unknown }): Promise<void> {
   await db.query(
     "INSERT INTO price_snapshots(channel, price_65k_micros, price_131k_micros, raw_payload) VALUES ($1, $2, $3, $4::jsonb)",
