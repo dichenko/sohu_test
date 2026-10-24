@@ -1,5 +1,15 @@
 export const MICROS_PER_TRX = 1_000_000n;
 
+export function parseReserveAmount(input: string, allowZero = false): bigint {
+  const value = input.trim().replace(/[ \u00a0\u202f]/g, '').replace(',', '.');
+  if (!/^\d{1,32}(?:\.\d{1,6})?$/.test(value)) {
+    throw new Error('Введите сумму TRX числом, до 6 знаков после точки или запятой.');
+  }
+  const amount = trxToMicros(value);
+  if (!allowZero && amount === 0n) throw new Error('Сумма пополнения должна быть больше нуля.');
+  return amount;
+}
+
 export function trxToMicros(value: string | number): bigint {
   const text = String(value).trim();
   if (!/^\d+(?:\.\d+)?$/.test(text)) throw new Error(`Invalid non-negative TRX amount: ${text}`);

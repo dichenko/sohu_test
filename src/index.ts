@@ -1,10 +1,10 @@
 import { createServer } from "node:http";
+import { InlineKeyboard } from "grammy";
 import { AutochargingService } from "./autocharging.js";
 import { createBot } from "./bot.js";
 import { loadConfig } from "./config.js";
 import { createDb } from "./db.js";
 import { createLogger } from "./logger.js";
-import { trxToMicros } from "./money.js";
 import { Notifier } from "./notifier.js";
 import { bootstrapUsers, logAudit } from "./repository.js";
 import { SohuClient } from "./sohu.js";
@@ -13,7 +13,7 @@ const config = loadConfig();
 const logger = createLogger(config);
 const db = createDb(config);
 await db.query("SELECT 1");
-await bootstrapUsers(db, config.ALLOWED_USER_ID, config.ADMIN_USER_ID, trxToMicros(config.INITIAL_USER_BALANCE_TRX));
+await bootstrapUsers(db, config.ALLOWED_USER_ID, config.ADMIN_USER_ID);
 
 const sohu = new SohuClient(config, db);
 const service = new AutochargingService(db, sohu, config, logger);
@@ -71,19 +71,34 @@ const health = createServer(async (request, response) => {
 });
 health.listen(config.PORT, "0.0.0.0", () => logger.info({ port: config.PORT }, "Health server listening"));
 
-const interval = setInterval(() => {
-  void service.syncAll((notification) => notifier.mirror(notification.text));
-}, config.SOHU_POLL_INTERVAL_SECONDS * 1000);
-setTimeout(() => void service.syncAll((notification) => notifier.mirror(notification.text)), 5_000);
-
 let stopping = false;
+let syncTask: Promise<void> | undefined;
+async function synchronize() {
+  if (stopping || syncTask) return;
+  syncTask = (async () => {
+    try {
+      await service.syncAll();
+      await service.deliverNotifications((notification, recipient) => notifier.send(
+        recipient === 'admin' ? config.ADMIN_USER_ID : config.ALLOWED_USER_ID,
+        (recipient === 'admin' ? '👁 Уведомление пользователя\n\n' : '') + notification.text,
+        { reply_markup: new InlineKeyboard().text('💰 Пополнить', `topup:${notification.subscriptionId}`).text('Открыть адрес', `a:${notification.subscriptionId}`) }
+      ));
+    } catch (error) { logger.error({ err: error }, 'Background synchronization failed'); }
+  })();
+  await syncTask;
+  syncTask = undefined;
+}
+const interval = setInterval(() => void synchronize(), config.SOHU_POLL_INTERVAL_SECONDS * 1000);
+const initialSync = setTimeout(() => void synchronize(), 5_000);
 async function shutdown(signal: string) {
   if (stopping) return;
   stopping = true;
   logger.info({ signal }, "Shutting down");
   clearInterval(interval);
-  bot.stop();
+  clearTimeout(initialSync);
+  if (bot.isRunning()) await bot.stop();
   health.close();
+  await syncTask;
   await db.end();
 }
 process.once("SIGINT", () => void shutdown("SIGINT"));

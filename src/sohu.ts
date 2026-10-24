@@ -23,12 +23,12 @@ export class SohuClient {
     return this.request<{ balance_trx: string; balance_usdt: string }>("GET", "/user_info");
   }
 
-  delegateEnergy(input: { address: string; balanceTrx: string; depositTrx: string }) {
+  delegateEnergy(input: { address: string; balanceTrx: string }) {
     return this.request<{ address: string; balance: string; status: "start" | "stop"; net_protect?: string }>(
       "POST",
       "/delegate_energy_smart",
       undefined,
-      { address: input.address, balance: input.balanceTrx, channel: "high_frequency", hf_deposit: input.depositTrx, net_protect: this.config.SOHU_NET_PROTECT }
+      { address: input.address, balance: input.balanceTrx, channel: "high_frequency", hf_deposit: "0", net_protect: this.config.SOHU_NET_PROTECT }
     );
   }
 

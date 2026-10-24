@@ -12,20 +12,23 @@ export class Notifier {
     private readonly logger: Logger
   ) {}
 
-  async send(chatId: bigint, text: string, options: Record<string, unknown> = {}): Promise<void> {
+  async send(chatId: bigint, text: string, options: Record<string, unknown> = {}): Promise<boolean> {
     await logTelegramEvent(this.db, { userId: chatId, direction: "out", eventType: "message", payload: { text, options } });
     try {
       await this.bot.api.sendMessage(chatId.toString(), text, options);
+      return true;
     } catch (error) {
       this.logger.error({ err: error, chatId: chatId.toString() }, "Telegram send failed");
       await logTelegramEvent(this.db, { userId: chatId, direction: "out", eventType: "message.failed", payload: { text, error: error instanceof Error ? error.message : String(error) } });
+      return false;
     }
   }
 
-  async mirror(text: string): Promise<void> {
-    await Promise.all([
+  async mirror(text: string): Promise<boolean> {
+    const results = await Promise.all([
       this.send(this.userId, text),
-      this.adminId === this.userId ? Promise.resolve() : this.send(this.adminId, `👁 Уведомление пользователя\n\n${text}`)
+      this.adminId === this.userId ? Promise.resolve(true) : this.send(this.adminId, `👁 Уведомление пользователя\n\n${text}`)
     ]);
+    return results.every(Boolean);
   }
 }
